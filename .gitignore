@@ -1,6 +1,8 @@
 .local/
 .rstudio/
 .session_info/
+.Rhistory
+.config/
 R/
 mytmp/
 myrun/
