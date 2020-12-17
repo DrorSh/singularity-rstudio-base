@@ -1,0 +1,8 @@
+.local/
+.rstudio/
+.session_info/
+R/
+mytmp/
+myrun/
+*.sif
+
