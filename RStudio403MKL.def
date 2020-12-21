@@ -1,0 +1,199 @@
+BootStrap: docker
+From: ubuntu:20.04
+
+%labels
+  Maintainer Dror Shvadron
+  R_Version 4.0.3
+  RStudio_Version 1.3.1093
+  MKL_Version intel-mkl-64bit-2020.0-088
+  Image_Name singularity-rstudio-mkl
+  Image_Version singularity-rstudio-mkl-01
+
+%help
+  This will run RStudio Server with tidyverse and support for knitting
+
+%runscript
+  exec port_and_password "${@}"
+
+%apprun R
+  exec R "${@}"
+
+%apprun Rscript
+  exec Rscript "${@}"
+
+%apprun rserver
+  exec rserver "${@}"
+
+%apprun rstudio
+  exec rserver "${@}"
+
+%apprun default
+  exec "${@}"
+
+%apprun pp
+  exec port_and_password "${@}"
+
+%environment
+  export PATH=/usr/lib/rstudio-server/bin:${PATH}:/usr/lib/rstudio-server/bin/pandoc
+  export SHELL=/bin/bash
+  export LC_ALL=en_US.UTF-8
+  export LANG=en_US.UTF-8
+  export LANGUAGE=en_US.UTF-8
+  export MKL_THREADING_LAYER=GNU
+
+%setup
+  install -Dv \
+    rstudio_auth_1_3.sh \
+    ${SINGULARITY_ROOTFS}/usr/lib/rstudio-server/bin/rstudio_auth
+  install -Dv \
+    ldap_auth.py \
+    ${SINGULARITY_ROOTFS}/usr/lib/rstudio-server/bin/ldap_auth
+
+  install -Dv \
+    port_and_password_1_3.sh \
+    ${SINGULARITY_ROOTFS}/usr/lib/rstudio-server/bin/port_and_password
+
+%post
+  # Software versions
+  export R_VERSION=4.0.3
+  export RSTUDIO_VERSION=1.3.1093
+  export MKL_VERSION=intel-mkl-64bit-2020.0-088
+
+  export DEBIAN_FRONTEND=noninteractive
+
+  # Get dependencies
+  apt-get update
+  apt-get install -y --no-install-recommends \
+    apt-utils \
+    gnupg2 \
+    locales \
+    ca-certificates \
+    wget \
+    gdebi-core \
+    libssl1.1 \
+    libssl-dev \
+    dpkg-sig \
+    python3-ldap3
+
+  # Configure default locale
+  echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+  locale-gen en_US.utf8
+  /usr/sbin/update-locale LANG=en_US.UTF-8
+  export LC_ALL=en_US.UTF-8
+  export LANG=en_US.UTF-8
+
+  # Install MKL (following http://dirk.eddelbuettel.com/blog/2018/04/15/#018_mkl_for_debian_ubuntu)
+  cd /tmp
+  wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS-2019.PUB
+  apt-key add GPG-PUB-KEY-INTEL-SW-PRODUCTS-2019.PUB
+  sh -c 'echo deb https://apt.repos.intel.com/mkl all main > /etc/apt/sources.list.d/intel-mkl.list'
+  apt-get update
+  apt-get install -y ${MKL_VERSION}
+  # bug (?) fix (see https://github.com/eddelbuettel/mkl4deb)
+  echo "MKL_THREADING_LAYER=GNU" >> /etc/environment
+  mkdir -p /etc/rstudio
+  echo "MKL_THREADING_LAYER=GNU" >> /etc/rstudio/rsession-profile
+  echo "MKL_THREADING_LAYER=GNU" >> /etc/profile
+  # There is an additional setting that is required (see https://cran.rstudio.com/doc/manuals/r-patched/R-admin.html#MKL)
+  # echo "MKL_INTERFACE_LAYER=GNU,LP64" >> /etc/environment
+
+  ## update alternatives
+  update-alternatives --install /usr/lib/x86_64-linux-gnu/libblas.so     \
+                    libblas.so-x86_64-linux-gnu      /opt/intel/mkl/lib/intel64/libmkl_rt.so 50
+  update-alternatives --install /usr/lib/x86_64-linux-gnu/libblas.so.3   \
+                    libblas.so.3-x86_64-linux-gnu    /opt/intel/mkl/lib/intel64/libmkl_rt.so 50
+  update-alternatives --install /usr/lib/x86_64-linux-gnu/liblapack.so   \
+                    liblapack.so-x86_64-linux-gnu    /opt/intel/mkl/lib/intel64/libmkl_rt.so 50
+  update-alternatives --install /usr/lib/x86_64-linux-gnu/liblapack.so.3 \
+                    liblapack.so.3-x86_64-linux-gnu  /opt/intel/mkl/lib/intel64/libmkl_rt.so 50
+  echo "/opt/intel/lib/intel64"     >  /etc/ld.so.conf.d/mkl.conf
+  echo "/opt/intel/mkl/lib/intel64" >> /etc/ld.so.conf.d/mkl.conf
+  ldconfig
+
+
+  # Install R
+  echo "deb http://cran.r-project.org/bin/linux/ubuntu focal-cran40/" > /etc/apt/sources.list.d/r.list
+  apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9
+  # apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E084DAB9
+  apt-get update
+  apt-get install -y --no-install-recommends \
+    r-base=${R_VERSION}* \
+    r-base-core=${R_VERSION}* \
+    r-base-dev=${R_VERSION}* \
+    r-recommended=${R_VERSION}* \
+    r-base-html=${R_VERSION}* \
+    r-doc-html=${R_VERSION}* \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libxml2-dev \
+    libcairo2-dev \
+    libxt-dev \
+    libglpk-dev \
+    libgmp3-dev \
+    libharfbuzz-dev \
+    libfribidi-dev
+
+  # Add a default CRAN mirror.  Using CRAN binary timestamp 2020-12-15
+  echo "options(repos = c(CRAN = 'https://packagemanager.rstudio.com/all/__linux__/focal/287740'), download.file.method = 'libcurl')" >> /usr/lib/R/etc/Rprofile.site
+
+  # Add a directory for host R libraries
+  mkdir -p /library
+  echo "R_LIBS_SITE=/library:\${R_LIBS_SITE}" >> /usr/lib/R/etc/Renviron.site
+
+  # Clean up
+  # rm -rf /var/lib/apt/lists/*
+
+  # Install RStudio Server
+  # not working
+  #   gpg2 --keyserver keys.gnupg.net --recv-keys 3F32EE77E331692F 
+
+  # alternative?
+   gpg2 --keyserver hkps://peegeepee.com --recv-keys 3F32EE77E331692F
+
+  wget --no-verbose \
+       -O rstudio-server.deb \
+       "https://download2.rstudio.org/server/bionic/amd64/rstudio-server-${RSTUDIO_VERSION}-amd64.deb" && \
+       dpkg-sig --verify rstudio-server.deb && \
+    gdebi -n rstudio-server.deb && \
+    rm rstudio-server.deb
+
+  # Install tidyverse, here, and packages necessary for knitting to HTML 
+  # Using CRAN binary timestamp 2020-12-15
+  Rscript -e "install.packages(pkgs = c('tidyverse','here','caTools','rprojroot','Rcpp', 'base64enc', 'digest', 'evaluate', 'glue', 'highr', 'htmltools', 'jsonlite', 'knitr', 'magrittr', 'markdown', 'mime', 'rmarkdown', 'rprojroot', 'stringi', 'stringr', 'tinytex', 'xfun', 'yaml'), \
+     repos='https://packagemanager.rstudio.com/all/__linux__/focal/287740', \
+     dependencies=TRUE, \
+     clean = TRUE)"
+
+# Install additional packages
+  Rscript -e "install.packages(pkgs = c('drake', 'igraph', 'fixest','fst', 'lubridate', 'ggthemes'), \
+     repos='https://packagemanager.rstudio.com/all/__linux__/focal/287740', \
+     dependencies=TRUE, \
+     clean = TRUE)"
+
+
+  # Install extra stuff
+  apt-get install -y --no-install-recommends \
+    bsdmainutils \
+    iproute2 \
+    libxml2-dev \
+    curl \
+    wget \
+    bzip2 \
+    ca-certificates \
+    sudo \
+    locales \
+    emacs \
+    less \
+    make \
+    git \
+    ssh \
+    htop \
+    jq \
+    vim
+
+  # Clean up
+  apt-get clean && rm -rf /var/lib/apt/lists/*
+
+  # Make Mountpoints
+  mkdir -p /data
+  mkdir -p /workspace
