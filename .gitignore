@@ -3,8 +3,10 @@
 .session_info/
 .Rhistory
 .config/
+.ssh/
+Projects/
 R/
 mytmp/
 myrun/
 *.sif
-
+.bash_history
